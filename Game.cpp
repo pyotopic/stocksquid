@@ -9,390 +9,81 @@
 #include <chrono>
 #include <fstream>
 #include <algorithm>
-//#include <ofstream>
-//#include <ifstream>
+
+#include "Game.h"
+#include "Move.h"
+#include "helpers.h"
 
 using namespace std;
 
-const string initialFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 0";
 
-const int mailbox[120] = {
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1,  0,  1,  2,  3,  4,  5,  6,  7, -1,
-    -1,  8,  9, 10, 11, 12, 13, 14, 15, -1,
-    -1, 16, 17, 18, 19, 20, 21, 22, 23, -1,
-    -1, 24, 25, 26, 27, 28, 29, 30, 31, -1,
-    -1, 32, 33, 34, 35, 36, 37, 38, 39, -1,
-    -1, 40, 41, 42, 43, 44, 45, 46, 47, -1,
-    -1, 48, 49, 50, 51, 52, 53, 54, 55, -1,
-    -1, 56, 57, 58, 59, 60, 61, 62, 63, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
-};
-
-const int mailboxes[64] = {
-    21, 22, 23, 24, 25, 26, 27, 28,
-    31, 32, 33, 34, 35, 36, 37, 38,
-    41, 42, 43, 44, 45, 46, 47, 48,
-    51, 52, 53, 54, 55, 56, 57, 58,
-    61, 62, 63, 64, 65, 66, 67, 68,
-    71, 72, 73, 74, 75, 76, 77, 78,
-    81, 82, 83, 84, 85, 86, 87, 88,
-    91, 92, 93, 94, 95, 96, 97, 98
-};
-
-const bool slide[6] = {false, false, true, true, true, false};
-int offsets[6] = {0, 8, 4, 4, 8, 8}; /* knight or ray directions */
-int offset[6][8] = {
-	{   0,   0,  0,  0, 0,  0,  0,  0 },
-	{ -21, -19,-12, -8, 8, 12, 19, 21 }, /* KNIGHT */
-	{ -11,  -9,  9, 11, 0,  0,  0,  0 }, /* BISHOP */
-	{ -10,  -1,  1, 10, 0,  0,  0,  0 }, /* ROOK */
-	{ -11, -10, -9, -1, 1,  9, 10, 11 }, /* QUEEN */
-	{ -11, -10, -9, -1, 1,  9, 10, 11 }  /* KING */
-};
-
-enum Piece{
-    emptysquare = 0,
-    wpawn = 1 | 8,
-    wknight = 2 | 8, 
-    wbishop = 3 | 8,
-    wrook = 4 | 8,
-    wqueen = 5 | 8,
-    wking = 6 | 8,
-    bpawn = 1 | 16,
-    bknight = 2 | 16,
-    bbishop = 3 | 16,
-    brook = 4 | 16,
-    bqueen = 5 | 16,
-    bking = 6 | 16
-};
-
-inline map<Piece,int> setPieceValues(){
-    map<Piece,int> pieceMap;
-    pieceMap[wpawn] = 100;
-    pieceMap[bpawn] = -100;
-    pieceMap[wknight] = 300;
-    pieceMap[bknight] = -300;
-    pieceMap[wbishop] = 300;
-    pieceMap[bbishop] = -300;
-    pieceMap[wrook] = 500;
-    pieceMap[brook] = -500;
-    pieceMap[wqueen] = 900;
-    pieceMap[bqueen] = -900;
-    pieceMap[wking] = 10000;
-    pieceMap[bking] = -10000;
-
-    return pieceMap;
-}
-
-map<Piece,int> pieceValues = setPieceValues();
-const int bigScore = 100000;
-const int negativeInfinity = -1000000;
-const int positiveInfinity =  1000000;
-
-
-inline map<Piece,vector<int>> setValueDifferentials(){
-    map<Piece,vector<int>> scoreMaps;
-
-    scoreMaps[wpawn] = {
-        0,0,0,0,0,0,0,0,
-        5,5,5,5,5,5,5,5,
-        3,3,4,4,4,4,3,3,
-        2,2,3,3,3,3,2,2,
-        1,1,2,2,2,2,1,1,
-        1,1,1,0,0,1,1,1,
-        0,0,0,0,0,0,0,0,
-        0,0,0,0,0,0,0,0
-    };
-
-    scoreMaps[bpawn] = {
-        0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
-        0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
-        -1, -1, -1, -0, -0, -1, -1, -1,
-        -1, -1, -2, -2, -2, -2, -1, -1,
-        -2, -2, -3, -3, -3, -3, -2, -2,
-        -3, -3, -4, -4, -4, -4, -3, -3,
-        -5, -5, -5, -5, -5, -5, -5, -5,
-        0 , 0 , 0 , 0 , 0 , 0 , 0 ,  0
-    };
-
-    scoreMaps[wknight] = {
-        -1,0,0,0,0,0,0,-1,
-        1,1,1,1,1,1,1,1,
-        1,3,4,4,4,4,3,1,
-        0,1,3,3,3,3,1,0,
-        -1,0,2,2,2,2,0,-1,
-        -1,0,1,1,1,1,0,-1,
-        -1,-1,0,0,0,0,-1,-1,
-        -3,-2,-2,-2,-2,-2,-2,-3
-    };
-
-    scoreMaps[bknight] = {
-        3,2,2,2,2,2,2,3,
-        1,1,0,0,0,0,1,1,
-        1,0,-1,-1,-1,-1,1,0,
-        1,0,-2,-2,-2,-2,0,1,
-        0,-1,-3,-3,-3,-3,-1,0,
-        -1,-3,-4,-4,-4,-4,-3,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,
-        1,0,0,0,0,0,0,1
-    };
-
-    scoreMaps[wbishop] = {
-        2, 2, 2, 2, 2, 2, 2, 2,
-        1, 2, 2, 2, 2, 2, 2, 1,
-        0, 2, 2, 2, 2, 2, 2, 0,
-        -1, 1, 2, 2, 2, 2, 1, -1,
-        -2, 0, 2, 2, 2, 2, 0, -2,
-        -1, -1, 1, 1, 1, 1, -1, -1,
-        0, 1, -1, 1, 1, -1, 1, 0,
-        -3, -3, -3, -3, -3, -3, -3, -3
-    };
-
-    scoreMaps[bbishop] = {
-        3, 3, 3, 3, 3, 3, 3, 3,
-        0, -1, 1, -1, -1, 1, -1, 0,
-        1, 1, -1, -1, -1, -1, 1, 1,
-        2, 0, -2, -2, -2, -2, 0, 2,
-        1, -1, -2, -2, -2, -2, -1, 1,
-        0, -2, -2, -2, -2, -2, -2, 0,
-        -1, -2, -2, -2, -2, -2, -2, -1,
-        -2, -2, -2, -2, -2, -2, -2, -2
-    };
-
-    scoreMaps[wrook] = {
-        2, 2, 2, 2, 2, 2, 2, 2,
-        3, 3, 3, 3, 3, 3, 3, 3,
-        2, 2, 2, 2, 2, 2, 2, 2,
-        1, 1, 1, 1, 1, 1, 1, 1,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-        -2, -2, -2, -2, -2, -2, -2, -2,
-        -3, -3, -3, -3, -3, -3, -3, -3
-    };
-
-    scoreMaps[brook] = {
-        3, 3, 3, 3, 3, 3, 3, 3,
-        2, 2, 2, 2, 2, 2, 2, 2,
-        1, 1, 1, 1, 1, 1, 1, 1,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-        -2, -2, -2, -2, -2, -2, -2, -2,
-        -3, -3, -3, -3, -3, -3, -3, -3,
-        -2, -2, -2, -2, -2, -2, -2, -2
-    };
-
-    scoreMaps[wqueen] = {
-        1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1, 1, 1, 1,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-    };
-
-    scoreMaps[bqueen] = {
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-    };
-
-    scoreMaps[wking] = {
-        2, 2, 2, 2, 2, 2, 2, 2,
-        2, 2, 2, 2, 2, 2, 2, 2,
-        2, 2, 2, 2, 2, 2, 2, 2,
-        1, 1, 1, 1, 1, 1, 1, 1,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        1, 2, 1, 0, 0, 0, 2, 1
-    };
-
-    scoreMaps[bking] = {
-        -1, -2, -1, 0, 0, 0, -2, -1,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        -1, -1, -1, -1, -1, -1, -1, -1,
-        -2, -2, -2, -2, -2, -2, -2, -2,
-        -2, -2, -2, -2, -2, -2, -2, -2,
-        -2, -2, -2, -2, -2, -2, -2, -2
-    };
-
-    return scoreMaps;
-}
-
-map<Piece,vector<int>> valueDifferentials = setValueDifferentials();
-
-enum MoveType{
-    quiet = 0,
-    doublePawnPush = 1,
-    kingCastle = 2,
-    queenCastle = 3,
-    captures = 4,
-    epCature = 5,
-    knightPromotion = 8,
-    bishopPromotion = 9,
-    rookPromotion = 10,
-    queenPromotion = 11,
-    knightPromoCapture = 12,
-    bishopPromoCapture = 13,
-    rookPromoCapture = 14,
-    queenPromoCapture = 15
-};
-
-inline Piece getCodeFor(char c){
-    if (c == 'P') return wpawn;
-    else if (c == 'N') return wknight;
-    else if (c == 'B') return wbishop;
-    else if (c == 'R') return wrook;
-    else if (c == 'Q') return wqueen;
-    else if (c == 'K') return wking;
-    else if (c == 'p') return bpawn;
-    else if (c == 'n') return bknight;
-    else if (c == 'b') return bbishop;
-    else if (c == 'r') return brook;
-    else if (c == 'q') return bqueen;
-    else if (c == 'k') return bking;
-    else return emptysquare;
-}
-
-inline char getCharFor(Piece piece){
-    if (piece == emptysquare) return ' ';
-    else if (piece == wpawn) return 'P';
-    else if (piece == wknight) return 'N';
-    else if (piece == wbishop) return 'B';
-    else if (piece == wrook) return 'R';
-    else if (piece == wqueen) return 'Q';
-    else if (piece == wking) return 'K';
-    else if (piece == bpawn) return 'p';
-    else if (piece == bknight) return 'n';
-    else if (piece == bbishop) return 'b';
-    else if (piece == brook) return 'r';
-    else if (piece == bqueen) return 'q';
-    else if (piece == bking) return 'k';
-    else return 'X';
-}
-
-class Move{
-public:
-    int from,to;
-    MoveType flag;
-
-    int scoreGuess = 0;
-
-    Move(){
-        from = 0;
-        to = 0;
-        flag = quiet;
+Game::Game(string fenString){
+    //board = new Piece [64];
+    for(int i = 0; i < 64; i++){
+        board[i] = emptysquare;
     }
-
-    Move(int afrom,int ato, MoveType aflag=quiet){
-        from = afrom;
-        to = ato;
-        flag = aflag;
+    int i = 0;
+    int j = 0;
+    int spaces = 0;
+    Move lastMove = Move();
+    for (int k = 0; k < fenString.length()-1; k++){
+        if (fenString[k] == ' '){
+            spaces += 1;
+            continue;
+        }
+        if (spaces == 0){
+            if (fenString[k]=='/'){
+                i += 1;
+                j = 0;
+            }
+            else if (48 < fenString[k] && fenString[k] <= 56) j += fenString[k] - 48;
+            else{
+                board[8*i+j] = getCodeFor(fenString[k]);
+                locations.insert(8*i+j);
+                //cout<<"good for position "<<8 * i  + j << endl;
+                if (fenString[k] == 'K') whiteKing = 8*i + j;
+                else if (fenString[k] == 'k') blackKing = 8 * i + j;
+                j += 1;
+            }
+        }
+        else if (spaces == 1){
+            //player to play
+            if (fenString[k] == 'w') wtp = true;
+            else wtp = false;
+        }
+        else if (spaces == 2){
+            //castling availability
+            if (fenString[k] == '-'){
+                for (int i = 0; i < 4; i++) castling[i] = 1;
+            }
+            else if (fenString[k] == 'K') castling[0] = 0;
+            else if (fenString[k] == 'Q') castling[1] = 0;
+            else if (fenString[k] == 'k') castling[2] = 0;
+            else if (fenString[k] == 'q') castling[3] = 0;
+        }
+        else if (spaces == 3){
+            if (fenString[k] == '-') continue;
+            int col = fenString[k]-97;
+            int row = 56 - fenString[k+1];
+            int start = row + 8 - 16 * wtp;
+            int end = row - 8 + 16 * wtp;
+            lastMove.from = 8 * start + col;
+            lastMove.to = 8 * end + col;
+            lastMove.flag = doublePawnPush;
+            moves.push_back(make_pair(lastMove,emptysquare));
+            k++;
+        }
+        else if (spaces == 4){
+            halfMoves = fenString[k] - 48;
+        }
+        else if (spaces == 5){
+            //I lazily don't care about this
+            break;
+        }
     }
-    unsigned int flatten(){
-        return (((from << 6)+to)<<4)+flag;
-    }
-
-    bool operator < (const Move & m) const{
-        return scoreGuess < m.scoreGuess;
-    }
-
-};
-
-inline Move unflatten(unsigned int flat){
-    MoveType flag = MoveType(flat & 15);
-    int to = (flat >> 4) & 63;
-    int from = (flat >> 10);
-    return Move(from,to,flag);
+    cout<<"done"<<endl;
 }
 
-
-vector<Move> unflattenList(vector<int> flatList){
-    vector<Move> myMoves;
-    for (auto f : flatList){
-        myMoves.push_back(unflatten(f));
-    }
-    return myMoves;
-}
-
-class Game{
-public:
-    Piece board[64];
-    set<int> locations;
-    //white to play
-    bool wtp = true;
-    //white kingside, white queenside, black kingside, black queenside; the value represents number of moves since last castling option was valid
-    int castling[4] = {1,1,1,1};
-    // castling states
-    bool whiteCastled = false;
-    bool blackCastled = false;
-    //king locations
-    int whiteKing = 60;
-    int blackKing = 4;
-    //50 move rule
-    int halfMoves = 0;
-    //moves describes what has happened in the game; in <move,piece>, move is the move made and piece is the piece type that was captured on move.to (0 by default)
-    vector<pair<Move,Piece>> moves;
-    //vector<unsigned int> flatMoves;
-    //map<vector<unsigned int>,vector<Move>> savedMoves;
-    //map<vector<unsigned int>,bool> seen;
-
-    Game(string);
-    friend ostream& operator<<(ostream& os, const Game& game);
-
-    void makeMove(Move);
-    void unmake();
-
-    void clean();
-
-    vector<Move> generatePseudoLegal();
-    vector<Move> generateLegal();
-
-    bool isInCheck(bool);
-
-    int shallowValue();
-    int heuristicValue();
-    int evaluate(int);
-    int evaluate2(int,int,int);
-    Move getBestMove(int);
-    Move getBestMove2(int);
-
-    void printMove(Move);
-
-    bool hasLegal();
-    bool isLegal(Move);
-
-    int gameOver();
-
-    bool locationTest();
-
-    int countMoves(int);
-    int countPseudo(int);
-
-    string gameString;
-    void updateGameString();
-
-    string convertMoveList();
-
-    string convertMove(Move);
-
-    Move convertString(string);
-
-    void setMoveScore(Move&);
-
-};
 
 int Game::countPseudo(int depth){
     vector<Move> pseudos = generatePseudoLegal();
@@ -658,15 +349,6 @@ Move Game::getBestMove(int depth){
     return legalMoves[bestIndex];
 }
 
-
-inline bool onBoard(int x){
-    return (0 <= x) && (x < 64);
-}
-
-inline bool colour(Piece piece){
-    return 2 - (piece >> 3);
-}
-
 void Game::setMoveScore(Move& move){
     int guess = 0;
     if (board[move.to] != emptysquare){
@@ -706,15 +388,6 @@ vector<Move> Game::generateLegal(){
 
     return pseudos;
 }
-
-inline vector<int> flattenList(vector<Move> mlist){
-    vector<int> myMoves;
-    for (auto m : mlist){
-        myMoves.push_back(m.flatten());
-    }
-    return myMoves;
-}
-
 
 bool Game::hasLegal(){
     //bad solution; during the loop through locations, `locations' is edited during makeMove/unmake, changing the order and creating an infinite loop whereby we never finish iterating through locations. Making a shallow copy resolves this issue, but negates the speedup from having the locations array in the first place.
@@ -1213,300 +886,6 @@ void Game::makeMove(Move move){
 }
 
 
-inline string printLine(){
-    string s = "";
-    for (int i = 0; i < 8; i++){
-        s += "____";
-    }
-    s += "_";
-    return s;
-}
-
-ostream& operator<<(ostream& os, const Game& game){
-    os<<printLine();
-    os << "\n";
-    for (int i = 0; i < 8; i++){
-        os << "|";
-        for (int j = 0; j < 8; j++){
-            os << " ";
-            char c = getCharFor(game.board[8*i+j]);
-            os << c;
-            os << " |";
-        }
-        os << "\n";
-        os<<printLine();
-        os << "\n";
-    }
-    return os;
-}
-
-
-
-Game::Game(string fenString){
-    //board = new Piece [64];
-    for(int i = 0; i < 64; i++){
-        board[i] = emptysquare;
-    }
-    int i = 0;
-    int j = 0;
-    int spaces = 0;
-    Move lastMove = Move();
-    for (int k = 0; k < fenString.length()-1; k++){
-        if (fenString[k] == ' '){
-            spaces += 1;
-            continue;
-        }
-        if (spaces == 0){
-            if (fenString[k]=='/'){
-                i += 1;
-                j = 0;
-            }
-            else if (48 < fenString[k] && fenString[k] <= 56) j += fenString[k] - 48;
-            else{
-                board[8*i+j] = getCodeFor(fenString[k]);
-                locations.insert(8*i+j);
-                //cout<<"good for position "<<8 * i  + j << endl;
-                if (fenString[k] == 'K') whiteKing = 8*i + j;
-                else if (fenString[k] == 'k') blackKing = 8 * i + j;
-                j += 1;
-            }
-        }
-        else if (spaces == 1){
-            //player to play
-            if (fenString[k] == 'w') wtp = true;
-            else wtp = false;
-        }
-        else if (spaces == 2){
-            //castling availability
-            if (fenString[k] == '-'){
-                for (int i = 0; i < 4; i++) castling[i] = 1;
-            }
-            else if (fenString[k] == 'K') castling[0] = 0;
-            else if (fenString[k] == 'Q') castling[1] = 0;
-            else if (fenString[k] == 'k') castling[2] = 0;
-            else if (fenString[k] == 'q') castling[3] = 0;
-        }
-        else if (spaces == 3){
-            if (fenString[k] == '-') continue;
-            int col = fenString[k]-97;
-            int row = 56 - fenString[k+1];
-            int start = row + 8 - 16 * wtp;
-            int end = row - 8 + 16 * wtp;
-            lastMove.from = 8 * start + col;
-            lastMove.to = 8 * end + col;
-            lastMove.flag = doublePawnPush;
-            moves.push_back(make_pair(lastMove,emptysquare));
-            k++;
-        }
-        else if (spaces == 4){
-            halfMoves = fenString[k] - 48;
-        }
-        else if (spaces == 5){
-            //I lazily don't care about this
-            break;
-        }
-    }
-    cout<<"done"<<endl;
-}
-
-Move getUserMove(Game& game);
-
-void moveTest();
-void pseudoTest();
-
-void pseudoTest(){
-    Game game = Game(initialFen);
-    time_t start = time(NULL);
-    int tot = 0;
-    for (int i = 0; i < 6; i++){
-        //time_t startStime = time(NULL);
-        int x = game.countPseudo(i);
-        tot += x;
-        //time_t notTime = time(NULL);
-        //cout << x<< " positions "<<endl;
-        //int timeDif = notTime - startStime;
-        //cout <<"This took "<<timeDif << " seconds"<<endl;
-        //if (timeDif > 0){
-        //    cout <<x / timeDif <<" nodes per second"<<endl; 
-        //}
-        
-    }
-
-    time_t end = time(NULL);
-    cout <<" this in total took" << int(end - start) << " seconds"<<endl;
-    cout << tot / (int(end - start)) << " nodes per second"<<endl;
-}
-
-void speedTest(){
-    Game game = Game(initialFen);
-    int totalMoves = 0;
-    vector<Move> pseudos = game.generatePseudoLegal();
-    time_t start = time(NULL);
-    while (time(NULL) - start < 10){
-        //pseudos = game.generatePseudoLegal();
-        for (int i = 0; i < pseudos.size(); i++){
-            game.makeMove(pseudos[i]);
-            game.unmake();
-        }
-        totalMoves += pseudos.size();
-    }
-    cout <<"This took "<< time(NULL) - start << " seconds"<<endl;
-    cout <<totalMoves <<" moves processed"<<endl;
-    cout << totalMoves / (time(NULL) - start) <<" moves per second"<<endl;
-}
-
-void moveTest(){
-    Game game = Game(initialFen);
-    time_t start = time(NULL);
-    int tot = 0;
-    for (int i = 0; i < 6; i++){
-        time_t startStime = time(NULL);
-        int x = game.countMoves(i);
-        tot += x;
-        time_t notTime = time(NULL);
-        cout << x<< " positions "<<endl;
-        int timeDif = notTime - startStime;
-        cout <<"This took "<<timeDif << " seconds"<<endl;
-        if (timeDif > 0){
-            cout <<x / timeDif <<" nodes per second"<<endl; 
-        }
-        
-    }
-    time_t end = time(NULL);
-    cout <<" this in total took" << int(end - start) << " seconds"<<endl;
-    cout << tot / (int(end - start)) << " nodes per second"<<endl;
-}
-
-
-
-int main(){
-
-    string customStart = "r1b1k2r/ppppqp2/7p/4p1p1/4n3/2P1bQ2/PP3PPP/RN2KB1R w KQkq - 0 0";
-    string customStart2 = "r1b1k2r/pppp1ppp/2n5/4p1B1/4P3/p1P3P1/2P1QP1P/R3KB1q b Qkq - 0 0";
-    string customStart3 = "r1bqkb1r/ppp1pppp/3p1n2/4n3/2B1PP2/2N5/PPPPQ1PP/R1B1K1NR b KQkq - 0 0";
-    string customStart4 = "r2k1b1r/ppN1ppp1/2q2n1p/8/P1nP4/5RQP/1PP3P1/R1B3K1 b - - 0 0";
-    string customStart5 = "rnbqkbnr/ppppppPp/8/8/8/8/PPPPPP1P/RNBQKBNR w KQkq - 0 0";
-    string customStart6 = "rnbqkbnr/pppppp2/8/8/3PP1p1/6PP/PPP3B1RNBQK1NR b KQkq - 0 0";
-    string testPosition = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 0";
-    Game game = Game(initialFen);
-    cout << game;
-
-    //int numMoves = game.countMoves(0);
-
-    //cout <<" there are "<<numMoves << endl;
-
-    //moveTest();
-    //pseudoTest();
-    //speedTest();
-
-    //int numMoves = game.countMoves(5);
-    //cout<<"There are "<<numMoves <<" sequences available"<<endl;
-
-
-    //int ai = 1;
-    set<int> ais;
-    ais.insert(0);
-    //ais.insert(1);
-    //CHANGE THE DEPTH HERE
-    int depth = 4;
-
-    while (true){
-        
-        // vector<Move> movers = game.generateLegal();
-        // for (auto move: movers){
-        //     game.printMove(move);
-        // }
-        if (ais.count(game.wtp) == 1){
-            auto start  = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch()).count();
-            Move move = game.getBestMove2(depth);
-            auto end  = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch()).count();
-            game.printMove(move);
-            cout <<" this took "<<end - start <<" milliseconds"<<endl;
-            game.makeMove(move);
-        }
-        else game.makeMove(getUserMove(game));
-        cout << game;
-        int result = game.gameOver();
-        if (result >= 0){
-            if (result == 0) cout <<"Black wins! "<<endl;
-            else if (result == 1) cout <<"White wins!"<<endl;
-            else cout <<"Draw."<<endl;
-            break;
-        }
-    }
-    return 0;
-}
-
-inline int getIndexOfSquare(string a){
-    int toCol = a[0]-97;
-    int toRow = 56 - a[1];
-    return 8 * toRow + toCol;
-}
-
-inline string getCoordinatesOfSquare(int n){
-    int toRow = n / 8;
-    int toCol = n% 8;
-    char c = toCol + 97;
-    char r = 56 - toRow;
-    string s = "";
-    s += c;
-    s += r;
-    return s;
-}
-
-
-Move getUserMove(Game& game){
-    string moveString;
-    cout<<"Enter Move:\n";
-    cin>>moveString;
-    Piece piece = getCodeFor(moveString[0]);
-    int toCol = moveString[1]-97;
-    int toRow = 56 - moveString[2];
-    vector<Move> goodMoves;
-    for (auto move: game.generateLegal()){
-        if ((move.to == 8 * toRow + toCol) && (game.board[move.from]==piece)) goodMoves.push_back(move);
-    }
-
-    if (goodMoves.size() == 0){
-        cout<<"no move found"<<endl;
-        return getUserMove(game);
-    }
-    else if (goodMoves.size() > 1){
-        string from;
-        cout <<"Enter start square:" << endl;
-        cin >> from;
-        int fromCol = from[0]-97;
-        int fromRow = 56 - from[1];
-        int fromSquare = 8 * fromRow + fromCol;
-        for (int i = 0; i < goodMoves.size();){
-            if (goodMoves[i].from != fromSquare){
-                goodMoves.erase(goodMoves.begin()+i);
-            } else i++;
-        }
-    }
-    if (goodMoves.size() == 0){
-        cout <<"no move found"<<endl;
-        return getUserMove(game);
-    }
-    else if (goodMoves.size() > 1){
-        string prom;
-        cout << "enter promotion flag:"<<endl;
-        cin >> prom;
-        MoveType promFlag = MoveType(stoi(prom));
-        for (int j = 0; j < goodMoves.size();){
-            if (goodMoves[j].flag != promFlag){
-                goodMoves.erase(goodMoves.begin()+j);
-            } else j++;
-        }
-    }
-
-    if (goodMoves.size() == 0){
-        cout <<"no move found"<<endl;
-        return getUserMove(game);
-    }
-
-    return goodMoves[0];
-}
 
 string Game::convertMoveList(){
     string s;
@@ -1681,4 +1060,22 @@ Move Game::convertString(string s){
 
 
     return move;
+}
+
+ostream& operator<<(ostream& os, const Game& game){
+    os<<printLine();
+    os << "\n";
+    for (int i = 0; i < 8; i++){
+        os << "|";
+        for (int j = 0; j < 8; j++){
+            os << " ";
+            char c = getCharFor(game.board[8*i+j]);
+            os << c;
+            os << " |";
+        }
+        os << "\n";
+        os<<printLine();
+        os << "\n";
+    }
+    return os;
 }
