@@ -5,8 +5,6 @@ Positions are evaluated on material value, taking into account a mobility heuris
 
 Board visualisation is simply done through text, and all interaction is via the console. Moves are input as:
 
-<pieceCharacter><square>
+[pieceCharacter][square]
 
-pieceCharacter is the same letter as in standard in English chess notation, using CAPITALS for white and LOWER-CASE for black.
-
-This format applies for ALL moves, including captures, castles and pawn moves (e.g. if black plays Bxe5, this becomes be5, if white plays O-O, this becomes Kg1, if black plays g6, this becomes pg6).
+pieceCharacter is the same letter as in standard in English chess notation, using CAPITALS for white and lowercase for black. This format applies for ALL moves, including captures, castles and pawn moves (e.g. if black plays Bxe5+, this becomes be5, if white plays O-O, this becomes Kg1, if black plays g6, this becomes pg6).
